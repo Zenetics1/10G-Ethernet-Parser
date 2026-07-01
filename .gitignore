@@ -1,0 +1,61 @@
+# ==========================================
+# Verilator & Simulation Artifacts
+# ==========================================
+obj_dir/
+*.vcd
+*.ghw
+*.fst
+sim_result.vvp
+
+# ==========================================
+# AMD / Xilinx Vivado (RFSoC Development)
+# ==========================================
+# Vivado run directories and project logs
+*.log
+*.jou
+*.str
+.Xil/
+vivado*.zip
+
+# Synthesis/Implementation outputs
+*.bit
+*.bin
+*.ltx
+*.prm
+
+# Vivado HLS and IP generation junk
+hd_visual/
+.srcs/
+*.dcp
+*.ip_user_files/
+*.hw/
+*.sim/
+*.runs/
+*.cache/
+
+# ==========================================
+# Intel / Altera Quartus
+# ==========================================
+db/
+incremental_db/
+simulation/
+timing/
+greybox_tmp/
+*.qws
+*.ddb
+*.csv
+*.cmp
+*.jdi
+*.pin
+*.sof
+*.pof
+
+# ==========================================
+# General Editor & OS Junk
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
