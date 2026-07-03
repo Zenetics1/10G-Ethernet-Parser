@@ -80,9 +80,9 @@ module block_sync_rx #(
         header = i_head;
         case (current_state)
             LOCK_LOST: begin
-                if (counter == 7'h40) begin 
+                if ((header[1] ^ header[0]) && counter == 7'h3F) begin 
                     next_state = BLOCK_LOCK;
-                end else if (!(header[1] ^ header[0])) begin
+                end else if (!(header[1] ^ header[0]) && i_valid) begin
                     o_slip = 1'b1;
                 end
             end
