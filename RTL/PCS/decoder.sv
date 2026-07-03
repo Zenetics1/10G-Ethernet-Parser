@@ -1,4 +1,4 @@
-`default_nettype none
+
 // this module is purely combinational. clk/rst_n are included for optional output registering only.
 
 module decoder #(
