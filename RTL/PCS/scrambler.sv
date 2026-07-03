@@ -47,21 +47,19 @@ module scrambler #(
     //   OUT[i] = data[i] XOR OUT[i-39] XOR OUT[i-58]
 
 
-    logic [57:0] state, state_next;
+    logic [57:0] state;
     // implement the parallel XOR equations (3 ranges for x <= I1,  I1 < x <= I0, I0 < x, as described above)
     integer j;
     always_ff @(posedge clk) begin
         if (~rst_n) begin
-            state <= '0;
-            o_valid <= '0;
+            state <= {58{1'b1}};
         end else begin
             if (i_valid) begin
-                for (j=0; j < 64; j++) begin
+                for (j=0; j < 58; j++) begin
                     state[j] <= o_scram_data[63-j];
                 end
-                o_valid <= 1'b1;
             end else begin
-                o_valid <= 1'b0;
+                state <= state;
             end
         end
     end
@@ -77,6 +75,7 @@ module scrambler #(
             end
         end
     endgenerate
+    assign o_valid = i_valid;
     assign o_scram_data[65:64] = i_enc_data[65:64];
 //     *: state_next stores last 58 bits of OUTPUT (not input) in reversed order: state_next[i] = OUT[63-i]
 //     *: update state with state_next on each valid cycle
