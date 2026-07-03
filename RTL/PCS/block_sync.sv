@@ -25,9 +25,11 @@ module block_sync_rx #(
     // this module acts as a simple state machine, taking sync headers from the
     // gearbox and evaluating alignment accuracy.
 
-    logic [6: 0] counter;
+    logic [6: 0] counter; //Count 64 valid header
 
-    logic [4: 0] invalid_header;
+    logic [4: 0] bad_header; //Count Invalid Headers
+    logic [5: 0] good_header; //Count Valid Headers
+  
 
     logic [1 : 0] header;   // 2-bit sync header to check
 
@@ -39,38 +41,52 @@ module block_sync_rx #(
     state current_state, next_state;
 
     always_ff @(posedge clk) begin
-        if (rst_n) begin
-            if(!i_serdes_v) begin
-                current_state <= LOCK_LOST;
+        if (rst_n) begin // If not reset
+            if(!i_serdes_v) begin  //If serdes does not send active frames
+                current_state <= LOCK_LOST; 
                 counter <= 7'b0;
-                invalid_header <= 5'b0;
+                good_header <= 6'b0;
+                bad_header <= 5'b0;
                 o_lock <= 1'b0;
-            end else if (i_valid) begin
+            end else if (i_valid) begin //If there is a valid 66 bit block ready
                 current_state <= next_state;
                 o_lock <= (next_state == BLOCK_LOCK);
 
-                if (current_state == BLOCK_LOCK 
-                    && next_state == LOCK_LOST) begin
-                    invalid_header <= 5'b0;
-                    counter <= 7'b0;
-                    end else if (header[1] ^ header[0]) begin
-                        counter <= counter + 1;
-                end else begin
-                    counter <= 7'b0;
-                    if(current_state == BLOCK_LOCK) begin
-                        invalid_header <= invalid_header + 1;
+                if (current_state == BLOCK_LOCK) begin //Count good vs bad headers when in BLOCK_LOCK state
+                    logic [4: 0] bad_next;
+                    logic [5: 0] good_next;
+                    good_next = good_header + (header[1] ^ header[0]);
+                    bad_next = bad_header + !(header[1] ^ header[0]);
+
+                    if(good_next + bad_next == 7'd64) begin
+                        good_header <= 6'b0;
+                        bad_header <= 5'b0;
+                    end else begin
+                        good_header <= good_next;
+                        bad_header <= bad_next;
                     end
+                end
+
+                if (current_state == BLOCK_LOCK && next_state == LOCK_LOST) begin //During trasition between states
+                    good_header <= 6'b0;
+                    bad_header <= 5'b0;
+                    counter <= 7'b0;
+                end else if (header[1] ^ header[0]) begin //If header is valid
+                    counter <= counter + 1;
+                end else begin //Reset counter
+                    counter <= 7'b0;
                 end
 
             end else begin
                 
             end
 
-        end else begin
+        end else begin // If reset
             o_lock <= 1'b0;
             current_state <= LOCK_LOST;
             counter <= 7'b0;
-            invalid_header <= 5'b0;
+            good_header <= 6'b0;
+            bad_header <= 5'b0;
         end
     end
 
@@ -80,19 +96,19 @@ module block_sync_rx #(
         header = i_head;
         case (current_state)
             LOCK_LOST: begin
-                if ((header[1] ^ header[0]) && counter == 7'h3F) begin 
+                if ((header[1] ^ header[0]) && counter == 7'h3F) begin //Previous 63 headers valid and 64th also valid so change state
                     next_state = BLOCK_LOCK;
-                end else if (!(header[1] ^ header[0]) && i_valid) begin
+                end else if (!(header[1] ^ header[0]) && i_valid) begin //If bad header, assert o_slip
                     o_slip = 1'b1;
                 end
             end
             BLOCK_LOCK: begin
-                if(invalid_header > 4'b1111) begin
+                if(bad_header > 4'b1111) begin //If bad headers greater than 15
                     next_state = LOCK_LOST;
                     o_slip = 1'b1;
                 end
             end
-            default: next_state = LOCK_LOST;
+            default: next_state = LOCK_LOST; //Always default back to LOST_LOCK state
         endcase
         
     end
