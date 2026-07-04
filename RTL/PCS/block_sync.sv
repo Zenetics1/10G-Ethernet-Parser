@@ -27,11 +27,11 @@ module block_sync_rx #(
 
     logic [6: 0] counter; //Count 64 valid header
 
-    logic [4: 0] bad_header; //Count Invalid Headers
-    logic [5: 0] good_header; //Count Valid Headers
+    logic [4: 0] bad_header_count; //Count Invalid Headers
+    logic [5: 0] good_header_count; //Count Valid Headers
   
 
-    logic [1 : 0] header;   // 2-bit sync header to check
+    logic [HEAD_W - 1 : 0] header;   // 2-bit sync header to check
 
     typedef enum logic [1 : 0]{
         LOCK_LOST = 2'b00,
@@ -45,31 +45,26 @@ module block_sync_rx #(
             if(!i_serdes_v) begin  //If serdes does not send active frames
                 current_state <= LOCK_LOST; 
                 counter <= 7'b0;
-                good_header <= 6'b0;
-                bad_header <= 5'b0;
+                good_header_count <= 6'b0;
+                bad_header_count <= 5'b0;
                 o_lock <= 1'b0;
             end else if (i_valid) begin //If there is a valid 66 bit block ready
                 current_state <= next_state;
                 o_lock <= (next_state == BLOCK_LOCK);
 
                 if (current_state == BLOCK_LOCK) begin //Count good vs bad headers when in BLOCK_LOCK state
-                    logic [4: 0] bad_next;
-                    logic [5: 0] good_next;
-                    good_next = good_header + (header[1] ^ header[0]);
-                    bad_next = bad_header + !(header[1] ^ header[0]);
-
                     if(good_next + bad_next == 7'd64) begin
-                        good_header <= 6'b0;
-                        bad_header <= 5'b0;
+                        good_header_count <= 6'b0;
+                        bad_header_count <= 5'b0;
                     end else begin
-                        good_header <= good_next;
-                        bad_header <= bad_next;
+                        good_header_count <= good_next;
+                        bad_header_count <= bad_next;
                     end
                 end
 
                 if (current_state == BLOCK_LOCK && next_state == LOCK_LOST) begin //During trasition between states
-                    good_header <= 6'b0;
-                    bad_header <= 5'b0;
+                    good_header_count <= 6'b0;
+                    bad_header_count <= 5'b0;
                     counter <= 7'b0;
                 end else if (header[1] ^ header[0]) begin //If header is valid
                     counter <= counter + 1;
@@ -85,15 +80,20 @@ module block_sync_rx #(
             o_lock <= 1'b0;
             current_state <= LOCK_LOST;
             counter <= 7'b0;
-            good_header <= 6'b0;
-            bad_header <= 5'b0;
+            good_header_count <= 6'b0;
+            bad_header_count <= 5'b0;
         end
     end
+
+    logic [5: 0] good_next;
+    logic [4: 0] bad_next;
 
     always_comb begin
         o_slip = 1'b0;
         next_state = current_state;
         header = i_head;
+        good_next = good_header_count + (header[1] ^ header[0]);
+        bad_next = bad_header_count + !(header[1] ^ header[0]);
         case (current_state)
             LOCK_LOST: begin
                 if ((header[1] ^ header[0]) && counter == 7'h3F) begin //Previous 63 headers valid and 64th also valid so change state
@@ -103,7 +103,7 @@ module block_sync_rx #(
                 end
             end
             BLOCK_LOCK: begin
-                if(bad_header > 4'b1111) begin //If bad headers greater than 15
+                if(bad_next > 5'd16) begin //If bad headers greater than 15
                     next_state = LOCK_LOST;
                     o_slip = 1'b1;
                 end
