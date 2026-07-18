@@ -53,7 +53,26 @@ module block_sync_iso_tb;
         end
     endtask
 
-    // --------------------------------------------------------------------------
+    task automatic send_header_with_errors(input int total, input int bad_count);
+        int positions[];
+        bit is_bad[int];
+
+        positions = new[total];
+        foreach (positions[i]) positions[i] = i;
+        positions.shuffle();
+
+        for(int i = 0; i < bad_count; i++) begin
+            is_bad[positions[i]] = 1'b1;
+        end
+
+        for(int i = 0; i < total; i++) begin
+            if(is_bad.exists(i)) begin
+                send_header(2'b11);
+            end else begin
+                send_header(i[0] ? 2'b01 : 2'b10);
+            end
+        end
+    endtask 
     // isolated test: you're simulating the gearbox upstream (driving i_valid + i_head)
     // and simulating the SerDes status (driving i_serdes_v).
     //
@@ -74,21 +93,137 @@ module block_sync_iso_tb;
     //   verify o_lock asserts after the 64th.
     //   verify o_slip never fires during this sequence.
 
+        task automatic test_lock_acquisition_valid_header();
+            $display("\n[TEST 1] o_lock asserts after 64th header & o_slip doesn't fire through sequence");
+
+            do_reset();
+            i_serdes_v = 1;
+
+            send_valid_headers(64);
+
+            if(o_lock == 1'b1) begin
+                $display("TEST PASSED: o_lock asserts after 64th header");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock not asserted after 64th header");
+                fail_count++;
+            end
+
+            if(o_slip == 1'b0) begin
+                $display("TEST PASSED: o_slip is never fired");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_slip fired");
+                fail_count++;
+            end
+
+
+        endtask 
+
     // test 2: lock acquisition : slip on invalid header
     //   i_serdes_v = 1, feed 30 valid headers, then 1 invalid (00 or 11).
     //   verify o_slip fires on the invalid header.
     //   verify o_lock stays low.
     //   verify the counter resets; need another 64 valid to lock.
+        task automatic test_lock_acquisition_slip_invalid_header();
+            $display("\n[TEST 2] o_slip fires on invalid header");
 
+            do_reset();
+            i_serdes_v = 1;
+
+            send_valid_headers(30);
+
+            i_valid = 1'b1;
+            i_head = 2'b11;
+            @(posedge clk);
+            
+            if(o_slip == 1'b1) begin
+                $display("TEST PASSED: o_slip fires on invalid header");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_slip doesn't fire on invalid header");
+                fail_count++;
+            end
+
+            if(o_lock == 1'b0) begin
+                $display("TEST PASSED: o_lock stays low on invalid header");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock asserts on invalid header");
+                fail_count++;
+            end
+
+            if(dut.counter == '0) begin
+                $display("TEST PASSED: Counter resets, requires another 64 valid headers");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: Counter doesn't reset");
+                fail_count++;
+            end
+
+            i_valid = 1'b0;
+        endtask 
     // test 3: lock acquisition -> multiple slips before lock
     //   feed patterns that cause 5 slips before 64 clean headers.
     //   verify each slip fires correctly and lock eventually asserts.
+        task automatic test_lock_acquisition_multiple_slip();
+            $display("\n[TEST 3] o_slip fires on invalid header");
 
+            do_reset();
+            i_serdes_v = 1;
+
+            for(int i = 0; i < 5; i++) begin
+                i_valid = 1'b1;
+                i_head = 2'b11;
+                @(posedge clk);
+                
+                if(o_slip == 1'b1) begin
+                    $display("TEST PASSED: o_slip fires invalid header #%d", i);
+                    pass_count++;
+                end else begin
+                    $display("TEST FAILED: o_slip doesn't fire on invalid header #%d", i);
+                    fail_count++;
+                end
+
+                i_valid = 1'b0;
+
+                @(posedge clk);
+            end
+
+            send_valid_headers(64);
+
+            if(o_lock == 1'b1) begin
+                $display("TEST PASSED: o_lock asserts after 64th header");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock not asserted after 64th header");
+                fail_count++;
+            end
+
+        endtask 
     // test 4: lock maintenance —> sparse invalid headers
     //   lock the module (64 valid headers).
     //   feed 1024 headers with 64 invalid ones spread throughout.
     //   verify o_lock stays high (64 < 65 threshold).
     //   *: the counter window is 1024. after 1024 headers, it resets.
+        task automatic test_lock_maintenance_sparse_invalid_headers();
+            $display("\n[TEST 4] Lock maintenance: Sparse invalid headers");
+
+            do_reset();
+            i_serdes_v = 1;
+
+            send_valid_headers(64);
+            send_header_with_errors(1024, 64);
+
+            if(o_lock == 1'b1) begin
+                $display("TEST PASSED: o_lock stays high");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock goes low, threshold violated");
+                fail_count++;
+            end
+
+        endtask 
 
     // test 5: lock loss —> 65 invalid in 1024 window
     //   lock the module.
@@ -120,6 +255,10 @@ module block_sync_iso_tb;
         i_serdes_v = 1;
 
         // implement tests here
+        test_lock_acquisition_valid_header();
+        test_lock_acquisition_slip_invalid_header();
+        test_lock_acquisition_multiple_slip();
+        test_lock_maintenance_sparse_invalid_headers();
 
         $display("\n==============================================");
         $display("  Results: %0d PASSED, %0d FAILED", pass_count, fail_count);
