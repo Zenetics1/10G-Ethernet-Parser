@@ -26,6 +26,8 @@ module block_sync_iso_tb;
     initial clk = 0;
     always #3.2 clk = ~clk;
 
+    bit slip_seen;
+    always @(posedge o_slip) slip_seen = 1'b1;
     int pass_count, fail_count;
 
     task automatic do_reset();
@@ -57,13 +59,14 @@ module block_sync_iso_tb;
         int positions[];
         bit is_bad[int];
 
-        positions = new[total];
+        positions = new[total - 1];
         foreach (positions[i]) positions[i] = i;
         positions.shuffle();
 
-        for(int i = 0; i < bad_count; i++) begin
+        for(int i = 0; i < bad_count - 1; i++) begin
             is_bad[positions[i]] = 1'b1;
         end
+        is_bad[total - 1] = 1'b1;
 
         for(int i = 0; i < total; i++) begin
             if(is_bad.exists(i)) begin
@@ -229,21 +232,193 @@ module block_sync_iso_tb;
     //   lock the module.
     //   feed headers such that 65 are invalid within a 1024-header window.
     //   verify o_lock drops, o_slip fires, module returns to LOCK_LOST.
+        task automatic test_lock_loss_65_invalid_1024_window();
+            $display("\n[TEST 5] Lock loss: 65 invalid headers in 1024 window");
 
+            do_reset();
+            i_serdes_v = 1;
+
+            send_valid_headers(64);
+            
+            slip_seen = 1'b0;
+            send_header_with_errors(1024, 65);
+
+            if(o_lock == 1'b0) begin
+                $display("TEST PASSED: o_lock is dropped");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock does not drop");
+                fail_count++;
+            end
+
+            if(slip_seen == 1'b1) begin
+                $display("TEST PASSED: o_slip fires on invalid header");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_slip doesn't fire on invalid header");
+                fail_count++;
+            end
+            
+            if(dut.current_state == dut.LOCK_LOST) begin
+                $display("TEST PASSED: Block_Sync returns to LOCK_LOST state");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: Block_Sync stays in BLOCK_LOCK state");
+                fail_count++;
+            end
+
+        endtask 
     // test 6: i_serdes_v gating
     //   lock the module, then drop i_serdes_v.
     //   verify o_lock drops immediately.
     //   reassert i_serdes_v, verify module starts acquisition from scratch.
+    task automatic test_i_serdes_v_gating();
+            $display("\n[TEST 6] i_serdes_v gating");
 
+            do_reset();
+            i_serdes_v = 1;
+
+            send_valid_headers(64);
+            
+            i_serdes_v = 0;
+            @(posedge clk);
+
+            if(o_lock == 1'b0) begin
+                $display("TEST PASSED: o_lock is dropped");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock does not drop");
+                fail_count++;
+            end
+            
+            i_serdes_v = 1;
+
+            send_valid_headers(63);
+
+            if(o_lock == 1'b0) begin
+                $display("TEST PASSED: o_lock stays low after 63 headers(reacquisition not yet complete)");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock does not drop");
+                fail_count++;
+            end
+
+            i_valid = 1'b1;
+            i_head = 2'b10;
+            @(posedge clk);
+
+            if(o_lock == 1'b1) begin
+                $display("TEST PASSED: o_lock asserts after 64th header");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock not asserted after 64th header");
+                fail_count++;
+            end
+        endtask     
     // test 7: i_valid gating
     //   hold i_valid low for 10 cycles while i_serdes_v is high.
     //   verify o_slip does NOT fire (no valid header to evaluate).
     //   verify the internal counter does not advance.
+        task automatic test_i_valid_gating();
+            $display("\n[TEST 7] i_valid gating");
 
+            do_reset();
+            i_serdes_v = 1;
+
+            send_valid_headers(5);
+            i_valid = 0;
+            int current_count = dut.counter;
+
+            for (int i = 0; i < 10; i++) @(posedge clk);                
+
+            if(o_slip == 1'b0) begin
+                $display("TEST PASSED: o_slip does not fire (no valid header to evaluate)");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_slip fires");
+                fail_count++;
+            end
+            
+            if(current_count == dut.counter) begin
+                $display("TEST PASSED: counter stays flat, does not advance");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: counter advances");
+                fail_count++;
+            end
+        endtask
     // test 8: lock-loss-relock cycle
     //   lock -> lose lock via 65 bad headers -> relock with 64 good headers.
     //   verify the full round-trip works cleanly.
+        task automatic test_lock_loss_relock_cycle();
+            $display("\n[TEST 8] lock-loss-relock cycle");
+        
+            do_reset();
+            i_serdes_v = 1;
 
+            send_valid_headers(64);
+
+            if(o_lock == 1'b1) begin
+                $display("TEST PASSED: o_lock asserts after 64th header");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock not asserted after 64th header");
+                fail_count++;
+            end
+            
+            if(o_slip == 1'b0) begin
+                $display("TEST PASSED: o_slip is never fired");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_slip fired");
+                fail_count++;
+            end
+
+            slip_seen = 1'b0;
+            send_header_with_errors(1024, 65);
+
+            if(o_lock == 1'b0) begin
+                $display("TEST PASSED: o_lock is dropped");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock does not drop");
+                fail_count++;
+            end
+
+            if(slip_seen == 1'b1) begin
+                $display("TEST PASSED: o_slip fires on invalid header");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_slip doesn't fire on invalid header");
+                fail_count++;
+            end
+            
+            if(dut.current_state == dut.LOCK_LOST) begin
+                $display("TEST PASSED: Block_Sync returns to LOCK_LOST state");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: Block_Sync stays in BLOCK_LOCK state");
+                fail_count++;
+            end
+
+            send_valid_headers(64);
+
+            if(o_lock == 1'b1) begin
+                $display("TEST PASSED: o_lock asserts after 64th header");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_lock not asserted after 64th header");
+                fail_count++;
+            end
+            
+            if(o_slip == 1'b0) begin
+                $display("TEST PASSED: o_slip is never fired");
+                pass_count++;
+            end else begin
+                $display("TEST FAILED: o_slip fired");
+                fail_count++;
+            end
+        endtask
     initial begin
         $display("==============================================");
         $display("  block_sync isolated testbench");
@@ -259,6 +434,10 @@ module block_sync_iso_tb;
         test_lock_acquisition_slip_invalid_header();
         test_lock_acquisition_multiple_slip();
         test_lock_maintenance_sparse_invalid_headers();
+        test_lock_loss_65_invalid_1024_window();
+        test_i_serdes_v_gating();
+        test_i_valid_gating();
+        test_lock_loss_relock_cycle();
 
         $display("\n==============================================");
         $display("  Results: %0d PASSED, %0d FAILED", pass_count, fail_count);
